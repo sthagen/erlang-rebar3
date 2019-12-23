@@ -27,7 +27,8 @@ init(State) ->
             {base_plt_location, undefined, "base-plt-location", string, "The location of base PLT file, defaults to $HOME/.cache/rebar3"},
             {plt_location, undefined, "plt-location", string, "The location of the PLT file, defaults to the profile's base directory"},
             {plt_prefix, undefined, "plt-prefix", string, "The prefix to the PLT file, defaults to \"rebar3\"" },
-            {base_plt_prefix, undefined, "base-plt-prefix", string, "The prefix to the base PLT file, defaults to \"rebar3\"" }],
+            {base_plt_prefix, undefined, "base-plt-prefix", string, "The prefix to the base PLT file, defaults to \"rebar3\"" },
+            {statistics, undefined, "statistics", boolean, "Print information about the progress of execution. Default: false" }],
     State1 = rebar_state:add_provider(State, providers:create([{name, ?PROVIDER},
                                                                {module, ?MODULE},
                                                                {bare, true},
@@ -155,6 +156,13 @@ plt_name(Prefix) ->
 
 do(Args, State, Plt) ->
     Output = get_output_file(State),
+    case debug_info(State) of
+        true ->
+            ok;
+        false ->
+            ?WARN("Add debug_info to compiler options (erl_opts) "
+                  "if Dialyzer fails to load Core Erlang.", [])
+    end,
     {PltWarnings, State1} = update_proj_plt(Args, State, Plt, Output),
     {Warnings, State2} = succ_typings(Args, State1, Plt, Output),
     case PltWarnings + Warnings of
@@ -474,12 +482,20 @@ proj_files(State) ->
     get_files(State, Apps, PltApps, [], PltMods).
 
 run_dialyzer(State, Opts, Output) ->
+    {Args, _} = rebar_state:command_parsed_args(State),
+    %% dialyzer uses command-line option `--statistics` for enabling
+    %% additional info about progress of execution, but internally
+    %% this option has name `timing`.
+    %% NOTE: Option `timing` accept boolean() or 'debug', but here we support
+    %% only boolean().
+    Timing = proplists:get_bool(statistics, Args),
     %% dialyzer may return callgraph warnings when get_warnings is false
     case proplists:get_bool(get_warnings, Opts) of
         true ->
             WarningsList = get_config(State, warnings, []),
             Opts2 = [{warnings, legacy_warnings(WarningsList)},
-                     {check_plt, false} |
+                     {check_plt, false},
+                     {timing, Timing} |
                      Opts],
             ?DEBUG("Running dialyzer with options: ~p~n", [Opts2]),
             Warnings = format_warnings(rebar_state:opts(State),
@@ -538,6 +554,12 @@ no_warnings() ->
 get_config(State, Key, Default) ->
     Config = rebar_state:get(State, dialyzer, []),
     proplists:get_value(Key, Config, Default).
+
+debug_info(State) ->
+    Config = rebar_state:get(State, erl_opts, []),
+    proplists:get_value(debug_info, Config, false) =/= false orelse
+    proplists:get_value(debug_info_key, Config, false) =/= false orelse
+    proplists:get_value(encrypt_debug_info, Config, false) =/= false.
 
 -spec collect_nested_dependent_apps([atom()]) -> [atom()].
 collect_nested_dependent_apps(RootApps) ->

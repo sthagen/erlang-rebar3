@@ -1,4 +1,4 @@
-%% Vendored from hex_core v0.5.0, do not edit manually
+%% Vendored from hex_core v0.5.1, do not edit manually
 
 -module(r3_hex_tarball).
 -export([create/2, create_docs/1, unpack/2, format_checksum/1, format_error/1]).
@@ -201,7 +201,7 @@ do_unpack(Files, Output) ->
 finish_unpack({error, _} = Error) ->
     Error;
 finish_unpack(#{metadata := Metadata, files := Files, output := Output}) ->
-    _Version = maps:get("VERSION", Files),
+    true = maps:is_key("VERSION", Files),
     Checksum = decode_base16(maps:get("CHECKSUM", Files)),
     ContentsBinary = maps:get("contents.tar.gz", Files),
     case unpack_tarball(ContentsBinary, Output) of

@@ -3,10 +3,10 @@
 %% ex: ft=erlang ts=4 sw=4 et
 
 main(_) ->
-    application:start(crypto),
-    application:start(asn1),
-    application:start(public_key),
-    application:start(ssl),
+    ensure_app(crypto),
+    ensure_app(asn1),
+    ensure_app(public_key),
+    ensure_app(ssl),
     inets:start(),
     inets:start(httpc, [{profile, rebar}]),
     set_httpc_options(),
@@ -35,7 +35,7 @@ main(_) ->
     bootstrap_rebar3(),
 
     %% Build rebar.app from rebar.app.src
-    {ok, App} = rebar_app_info:new(rebar, "3.11.1", filename:absname("_build/default/lib/rebar/")),
+    {ok, App} = rebar_app_info:new(rebar, "3.13.0", filename:absname("_build/default/lib/rebar/")),
     rebar_otp_app:compile(rebar_state:new(), App),
 
     %% Because we are compiling files that are loaded already we want to silence
@@ -56,6 +56,17 @@ main(_) ->
 
     %% Done with compile, can turn back on error logger
     error_logger:tty(true).
+
+ensure_app(App) ->
+    case application:start(App) of
+        ok ->
+            ok;
+        {error, _} ->
+            io:format("OTP Application ~p not available. Please fix "
+                      "your Erlang install to support it and try "
+                      "again.~n", [App]),
+            halt(1)
+    end.
 
 fetch_and_compile({Name, ErlFirstFiles}, Deps) ->
     case lists:keyfind(Name, 1, Deps) of

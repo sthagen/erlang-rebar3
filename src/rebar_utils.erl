@@ -493,7 +493,7 @@ reread_logger_config() ->
         _ ->
             %% Extract and apply settings related to primary configuration
             %% -- primary config is used for settings shared across handlers
-            LogLvlPrimary = proplists:get_value(logger_info, KernelCfg, all),
+            LogLvlPrimary = proplists:get_value(logger_level, KernelCfg, all),
             {FilterDefault, Filters} =
               case lists:keyfind(filters, 1, KernelCfg) of
                   false -> {log, []};
@@ -502,14 +502,25 @@ reread_logger_config() ->
             Primary = #{level => LogLvlPrimary,
                         filter_default => FilterDefault,
                         filters => Filters},
-            %% Load the correct handlers based on their individual config.
-            [case Id of
-                 default -> logger:update_handler_config(Id, Cfg);
-                 _ -> logger:add_handler(Id, Mod, Cfg)
-             end || {handler, Id, Mod, Cfg} <- LogCfg],
+            lists:foreach(fun maybe_reset_logger_handler/1, LogCfg),
             logger:set_primary_config(Primary),
             ok
     end.
+
+%% @private add or update handlers based on their individual config,
+%% also remove default handler if needed.
+maybe_reset_logger_handler({handler, Id, Mod, Cfg}) ->
+    case logger:add_handler(Id, Mod, Cfg) of
+        {error, {already_exist, Id}} ->
+            logger:update_handler_config(Id, Cfg);
+        _ ->
+            ok
+    end;
+maybe_reset_logger_handler({handler, default, undefined}) ->
+    _ = logger:remove_handler(default),
+    ok;
+maybe_reset_logger_handler(_) ->
+    ok.
 
 
 %% @doc Given env. variable `FOO' we want to expand all references to
@@ -896,6 +907,13 @@ get_http_vars(Scheme) ->
     GlobalConfigFile = rebar_dir:global_config(),
     Config = rebar_config:consult_file(GlobalConfigFile),
     proplists:get_value(Scheme, Config, OS).
+
+-ifdef (OTP_RELEASE).
+  -if(?OTP_RELEASE >= 23).
+    -compile({nowarn_deprecated_function, [{http_uri, parse, 1},
+                                           {http_uri, decode, 1}]}).
+  -endif.
+-endif.
 
 set_httpc_options() ->
     set_httpc_options(https_proxy, get_http_vars(https_proxy)),
