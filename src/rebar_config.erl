@@ -34,7 +34,6 @@
         ,write_lock_file/2
         ,verify_config_format/1
         ,format_error/1
-
         ,merge_locks/2]).
 
 -include("rebar.hrl").
@@ -70,7 +69,7 @@ consult_lock_file(File) ->
     case Terms of
         [] ->
             [];
-        [Locks] when is_list(Locks) -> % beta lock file
+        [Locks] when is_list(Locks) -> % beta/1.0.0 lock file
             read_attrs(beta, Locks, []);
         [{Vsn, Locks}|Attrs] when is_list(Locks) -> % versioned lock file
             %% Because this is the first version of rebar3 to introduce a lock
@@ -80,10 +79,16 @@ consult_lock_file(File) ->
                 ?CONFIG_VERSION ->
                     ok;
                 _ ->
-                    %% Make sure the warning below is to be shown whenever a version
-                    %% newer than the current one is being used, as we can't parse
-                    %% all the contents of the lock file properly.
-                    warn_vsn_once()
+                    case lists:member(Vsn, ?SUPPORTED_CONFIG_VERSIONS) of
+                        true ->
+                            ok;
+                        false ->
+                            %% Make sure the warning below is to be shown
+                            %% whenever a version newer than the current
+                            %% one is being used, as we can't parse all the
+                            %% contents of the lock file properly.
+                            warn_vsn_once()
+                    end
             end,
             read_attrs(Vsn, Locks, Attrs)
     end.
@@ -104,7 +109,6 @@ warn_vsn_once() ->
                   "information may be missing or lost. It is recommended to "
                   "upgrade Rebar3.", [])
     end.
-
 
 %% @doc Converts the internal format for locks into the multi-version
 %% compatible one used within rebar3 lock files.
@@ -132,6 +136,9 @@ write_lock_file(LockFile, Locks) ->
 format_attrs([]) -> [];
 format_attrs([{pkg_hash, Vals}|T]) ->
     [io_lib:format("{pkg_hash,[~n",[]), format_hashes(Vals), "]}",
+     maybe_comma(T) | format_attrs(T)];
+format_attrs([{pkg_hash_ext, Vals}|T]) ->
+    [io_lib:format("{pkg_hash_ext,[~n",[]), format_hashes(Vals), "]}",
      maybe_comma(T) | format_attrs(T)].
 
 %% @private format hashing in order to disturb source diffing as little
@@ -156,29 +163,31 @@ maybe_comma([_|_]) -> io_lib:format(",~n", []).
 read_attrs(_Vsn, Locks, Attrs) ->
     %% Beta copy does not know how to expand attributes, but
     %% is ready to support it.
-    expand_locks(Locks, extract_pkg_hashes(Attrs)).
+    {OldHashes, NewHashes} =  extract_pkg_hashes(Attrs),
+    expand_locks(Locks, OldHashes, NewHashes).
 
 %% @private extract the package hashes from lockfile attributes, if any.
--spec extract_pkg_hashes(list()) -> [binary()].
+-spec extract_pkg_hashes(list()) -> {[binary()], [binary()]}.
 extract_pkg_hashes(Attrs) ->
     Props = case Attrs of
                 [First|_] -> First;
                 [] -> []
             end,
-    proplists:get_value(pkg_hash, Props, []).
+     { proplists:get_value(pkg_hash, Props, []), proplists:get_value(pkg_hash_ext, Props, [])}.
 
 %% @private extract attributes from the lock file and integrate them
 %% into the full-blow internal lock format
 %% @end
 %% TODO: refine typings for lock()
--spec expand_locks(list(), list()) -> list().
-expand_locks([], _Hashes) ->
+-spec expand_locks(list(), list(), list()) -> list().
+expand_locks([], _OldHashes, _NewHashes) ->
     [];
-expand_locks([{Name, {pkg,PkgName,Vsn}, Lvl} | Locks], Hashes) ->
-    Hash = proplists:get_value(Name, Hashes),
-    [{Name, {pkg,PkgName,Vsn,Hash}, Lvl} | expand_locks(Locks, Hashes)];
-expand_locks([Lock|Locks], Hashes) ->
-    [Lock | expand_locks(Locks, Hashes)].
+expand_locks([{Name, {pkg,PkgName,Vsn}, Lvl} | Locks], OldHashes, NewHashes) ->
+    OldHash = proplists:get_value(Name, OldHashes),
+    NewHash = proplists:get_value(Name, NewHashes),
+    [{Name, {pkg,PkgName,Vsn,OldHash, NewHash}, Lvl} | expand_locks(Locks, OldHashes, NewHashes)];
+expand_locks([Lock|Locks], OldHashes, NewHashes) ->
+    [Lock | expand_locks(Locks, OldHashes, NewHashes)].
 
 %% @private split up extra attributes for locks out of the internal lock
 %% structure for backwards compatibility reasons
@@ -186,23 +195,28 @@ expand_locks([Lock|Locks], Hashes) ->
 write_attrs(Locks) ->
     %% No attribute known that needs to be taken out of the structure,
     %% just return terms as is.
-    {NewLocks, Hashes} = split_locks(Locks, [], []),
-    case Hashes of
-        [] -> {NewLocks, []};
-        _ -> {NewLocks, [{pkg_hash, lists:sort(Hashes)}]}
+    {NewLocks, OldHashes, NewHashes} = split_locks(Locks, [], [], []),
+    case {OldHashes, NewHashes} of
+        {[], []} -> {NewLocks, []};
+        _ ->
+            {NewLocks, [{pkg_hash, lists:sort(OldHashes)}, {pkg_hash_ext, lists:sort(NewHashes)}]}
     end.
 
 %% @private split up extra attributes for locks out of the internal lock
 %% structure for backwards compatibility reasons
--spec split_locks(list(), list(), [{_,binary()}]) -> {list(), list()}.
-split_locks([], Locks, Hashes) ->
-    {lists:reverse(Locks), Hashes};
-split_locks([{Name, {pkg,PkgName,Vsn,undefined}, Lvl} | Locks], LAcc, HAcc) ->
-    split_locks(Locks, [{Name,{pkg,PkgName,Vsn},Lvl}|LAcc], HAcc);
-split_locks([{Name, {pkg,PkgName,Vsn,Hash}, Lvl} | Locks], LAcc, HAcc) ->
-    split_locks(Locks, [{Name,{pkg,PkgName,Vsn},Lvl}|LAcc], [{Name, Hash}|HAcc]);
-split_locks([Lock|Locks], LAcc, HAcc) ->
-    split_locks(Locks, [Lock|LAcc], HAcc).
+-spec split_locks(list(), list(), [{_,binary()}], [{_,binary()}]) -> {list(), list(), list()}.
+split_locks([], Locks, OldHashes, NewHashes) ->
+    {lists:reverse(Locks), OldHashes, NewHashes};
+split_locks([{Name, {pkg,PkgName,Vsn,undefined}, Lvl} | Locks], LAcc, OldHAcc, NewHAcc) ->
+    split_locks(Locks, [{Name,{pkg,PkgName,Vsn},Lvl}|LAcc], OldHAcc, NewHAcc);
+split_locks([{Name, {pkg,PkgName,Vsn,undefined, undefined}, Lvl} | Locks], LAcc, OldHAcc, NewHAcc) ->
+    split_locks(Locks, [{Name,{pkg,PkgName,Vsn},Lvl}|LAcc], OldHAcc, NewHAcc);
+split_locks([{Name, {pkg,PkgName,Vsn, OldHash}, Lvl} | Locks], LAcc, OldHAcc, NewHAcc) ->
+    split_locks(Locks, [{Name,{pkg,PkgName, Vsn},Lvl}|LAcc], [{Name, OldHash}|OldHAcc], NewHAcc);
+split_locks([{Name, {pkg,PkgName,Vsn, OldHash, NewHash}, Lvl} | Locks], LAcc, OldHAcc, NewHAcc) ->
+    split_locks(Locks, [{Name,{pkg,PkgName,Vsn},Lvl}|LAcc], [{Name, OldHash}|OldHAcc], [{Name, NewHash}|NewHAcc]);
+split_locks([Lock|Locks], LAcc, OldHAcc, NewHAcc) ->
+    split_locks(Locks, [Lock|LAcc], OldHAcc, NewHAcc).
 
 %% @doc reads a given config file, including the `.script' variations,
 %% if any can be found, and asserts that the config format is in
