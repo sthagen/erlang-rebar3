@@ -216,8 +216,13 @@ reset_hooks(Opts, CurrentProfiles) ->
 -spec all_app_dirs([file:name()]) -> [{file:name(), [file:name()]}].
 all_app_dirs(LibDirs) ->
     lists:flatmap(fun(LibDir) ->
-                          {_, SrcDirs} = find_config_src(LibDir, ["src"]),
-                          app_dirs(LibDir, SrcDirs)
+                          case filelib:is_dir(LibDir) of
+                              true ->
+                                  {_, SrcDirs} = find_config_src(LibDir, ["src"]),
+                                  app_dirs(LibDir, SrcDirs);
+                              false ->
+                                  []
+                          end
                   end, LibDirs).
 
 %% @private find the directories for all apps based on their source dirs
@@ -359,8 +364,9 @@ create_app_info(AppInfo, AppDir, AppFile) ->
             Applications = proplists:get_value(applications, AppDetails, []),
             IncludedApplications = proplists:get_value(included_applications, AppDetails, []),
             AppInfo1 = rebar_app_info:name(
-                         rebar_app_info:original_vsn(
-                           rebar_app_info:dir(AppInfo, AppDir), AppVsn), AppName),
+                         rebar_app_info:vsn(
+                           rebar_app_info:original_vsn(
+                             rebar_app_info:dir(AppInfo, AppDir), AppVsn), AppVsn), AppName),
             AppInfo2 = rebar_app_info:applications(
                          rebar_app_info:app_details(AppInfo1, AppDetails), Applications),
             AppInfo3 = rebar_app_info:included_applications(AppInfo2, IncludedApplications),

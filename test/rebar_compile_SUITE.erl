@@ -27,8 +27,8 @@ all() ->
      parse_transform_test, erl_first_files_test, mib_test,
      umbrella_mib_first_test, only_default_transitive_deps, clean_all,
      clean_specific, profile_deps, deps_build_in_prod, only_deps,
-     override_deps, override_add_deps, override_del_deps,
-     override_opts, override_add_opts, override_del_opts,
+     override_deps, git_subdir_deps, override_add_deps, override_del_deps,
+     override_del_pkg_deps, override_opts, override_add_opts, override_del_opts,
      apply_overrides_exactly_once, override_only_deps,
      profile_override_deps, profile_override_add_deps, profile_override_del_deps,
      profile_override_opts, profile_override_add_opts, profile_override_del_opts,
@@ -38,7 +38,7 @@ all() ->
      recompile_when_parse_transform_as_opt_changes,
      recompile_when_parse_transform_inline_changes,
      regex_filter_skip, regex_filter_regression,
-     recursive, no_recursive,
+     recursive, no_recursive, extra_recursion,
      always_recompile_when_erl_compiler_options_set,
      dont_recompile_when_erl_compiler_options_env_does_not_change,
      recompile_when_erl_compiler_options_env_changes,
@@ -48,7 +48,7 @@ all() ->
 groups() ->
     [{basic_app, [], [build_basic_app, paths_basic_app, clean_basic_app]},
      {release_apps, [], [build_release_apps, paths_release_apps, clean_release_apps]},
-     {checkout_apps, [], [build_checkout_apps, paths_checkout_apps]},
+     {checkout_apps, [], [paths_checkout_apps]},
      {checkout_deps, [], [build_checkout_deps, paths_checkout_deps]},
      {basic_srcdirs, [], [build_basic_srcdirs, paths_basic_srcdirs]},
      {release_srcdirs, [], [build_release_srcdirs,
@@ -262,13 +262,6 @@ build_release_apps(Config) ->
     rebar_test_utils:run_and_check(
         Config, [], ["compile"],
         {ok, [{app, Name1}, {app, Name2}]}
-    ).
-
-build_checkout_apps(Config) ->
-    [Name1, Name2] = ?config(app_names, Config),
-    rebar_test_utils:run_and_check(
-        Config, [], ["compile"],
-        {ok, [{app, Name1}, {checkout, Name2}]}
     ).
 
 build_checkout_deps(Config) ->
@@ -1531,6 +1524,22 @@ override_deps(Config) ->
               {dep_not_exist, "other_dep"}]}
     ).
 
+git_subdir_deps(Config) ->
+    Deps = rebar_test_utils:expand_deps(git_subdir, [{"some_dep", "0.0.1", [{"other_dep", "0.0.1", []}]}]),
+    TopDeps = rebar_test_utils:top_level_deps(Deps),
+
+    {SrcDeps, _} = rebar_test_utils:flat_deps(Deps),
+    mock_git_subdir_resource:mock([{deps, SrcDeps}]),
+
+    RebarConfig = [
+        {deps, TopDeps}
+    ],
+    rebar_test_utils:run_and_check(
+        Config, RebarConfig, ["compile"],
+        {ok, [{subdir_dep, "some_dep"},
+              {subdir_dep, "other_dep"}]}
+    ).
+
 override_add_deps(Config) ->
     Deps = rebar_test_utils:expand_deps(git, [{"some_dep", "0.0.1", [{"other_dep", "0.0.1", []}]}]),
     TopDeps = rebar_test_utils:top_level_deps(Deps),
@@ -1597,6 +1606,28 @@ override_del_deps(Config) ->
               {dep_not_exist, "dep_b"},
               {dep_not_exist, "dep_c"},
               {dep, "dep_d"}]}
+    ).
+
+override_del_pkg_deps(Config) ->
+    Deps = rebar_test_utils:expand_deps(pkg, [{"some_dep", "0.0.1", [{"other_dep", "0.0.1", []}]}]),
+    TopDeps = rebar_test_utils:top_level_deps(Deps),
+
+    {_, PkgDeps} = rebar_test_utils:flat_deps(Deps),
+    mock_pkg_resource:mock([{pkgdeps, PkgDeps}]),
+
+    RebarConfig = [
+        {deps, TopDeps},
+        {overrides, [
+            {del, some_dep, [
+                {deps, [other_dep]}
+            ]}
+        ]}
+    ],
+
+    rebar_test_utils:run_and_check(
+        Config, RebarConfig, ["compile"],
+        {ok, [{dep, "some_dep"},
+              {dep_not_exist, "other_dep"}]}
     ).
 
 override_opts(Config) ->
@@ -2469,6 +2500,40 @@ no_recursive(Config) ->
     ?assert(false==lists:member("rec.beam",Files2)),
     ok.
 
+extra_recursion(Config) ->
+    AppDir = ?config(apps, Config),
+
+    Name = rebar_test_utils:create_random_name("app1_"),
+    Vsn = rebar_test_utils:create_random_vsn(),
+    rebar_test_utils:create_app(AppDir, Name, Vsn, [kernel, stdlib]),
+    rebar_test_utils:write_src_file(filename:join([AppDir, "src", "src2"]), "rec.erl"),
+    rebar_test_utils:write_src_file(filename:join([AppDir, "test", "test2"]), "rectest.erl"),
+
+    %% Default for src directories: recursive
+    %% default for extra_src directories: non-recursive
+    RebarConfig1 = [],
+    rebar_test_utils:run_and_check(Config, RebarConfig1, ["as", "test", "compile"],
+                                   {ok, [{app, Name}]}),
+    EbinDir = filename:join([AppDir, "_build", "test", "lib", Name, "ebin"]),
+    {ok, Files1} = rebar_utils:list_dir(EbinDir),
+    ?assert(lists:member("rec.beam", Files1)),
+    file:delete(filename:join(EbinDir, "rec.beam")),
+
+    TestEbinDir = filename:join([AppDir, "_build", "test", "lib", Name, "test"]),
+    {ok, TestFiles1} = rebar_utils:list_dir(TestEbinDir),
+    ?assertNot(lists:member("rectest.beam", TestFiles1)),
+
+    RebarConfig2 = [{src_dirs,[{"src",[{recursive,false}]}]},
+                    {extra_src_dirs, [{"test", [{recursive, true}]}]}],
+    rebar_test_utils:run_and_check(Config, RebarConfig2, ["as", "test", "compile"],
+                                   {ok, [{app, Name}]}),
+    {ok, Files2} = rebar_utils:list_dir(EbinDir),
+    ?assertNot(lists:member("rec.beam",Files2)),
+
+    {ok, TestFiles2} = rebar_utils:list_dir(TestEbinDir),
+    ?assert(lists:member("rectest.beam", TestFiles2)),
+    ok.
+
 regex_filter_skip(Config) ->
     AppDir = ?config(apps, Config),
     Name = rebar_test_utils:create_random_name("regex_skip"),
@@ -2525,13 +2590,17 @@ split_project_apps_hooks(Config) ->
     ok = filelib:ensure_dir(filename:join([AppDir2, "src", "dummy"])),
     ok = filelib:ensure_dir(filename:join([AppDir2, "include", "dummy"])),
     ok = filelib:ensure_dir(filename:join([HookDir, "dummy"])),
+    Cmd = case os:type() of
+        {win32, _} -> "dir /B";
+        _ -> "ls"
+    end,
     Cfg = fun(Name) ->
-        [{pre_hooks, [{compile, "ls "++HookDir++" > "++filename:join(HookDir, "pre-compile-"++Name)},
-                      {erlc_compile, "ls "++HookDir++" > "++filename:join(HookDir, "pre-erlc-"++Name)},
-                      {app_compile, "ls "++HookDir++" > "++filename:join(HookDir, "pre-app-"++Name)}]},
-         {post_hooks, [{compile, "ls "++HookDir++" > "++filename:join(HookDir, "post-compile-"++Name)},
-                       {erlc_compile, "ls "++HookDir++" > "++filename:join(HookDir, "post-erlc-"++Name)},
-                       {app_compile, "ls "++HookDir++" > "++filename:join(HookDir, "post-app-"++Name)}]}
+        [{pre_hooks, [{compile,      Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "pre-compile-"++Name)++"\""},
+                      {erlc_compile, Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "pre-erlc-"++Name)++"\""},
+                      {app_compile,  Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "pre-app-"++Name)++"\""}]},
+         {post_hooks, [{compile,      Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "post-compile-"++Name)++"\""},
+                       {erlc_compile, Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "post-erlc-"++Name)++"\""},
+                       {app_compile,  Cmd++" \""++HookDir++"\" > \""++filename:join(HookDir, "post-app-"++Name)++"\""}]}
         ]
     end,
     ok = file:write_file(filename:join(AppDir1, "rebar.config"),
