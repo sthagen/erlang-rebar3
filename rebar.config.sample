@@ -219,7 +219,7 @@
 
 %% apps to auto-boot with `rebar3 shell'; defaults to apps
 %% specified in a `relx' tuple, if any.
-{shell, [{apps, [app1, app2]}]}.
+{shell, [{apps, [app1, app2]}, {script_file, "shell.escript"}]}.
 
 %% == xref ==
 
@@ -243,3 +243,25 @@
 {xref_queries,
  [{"(XC - UC) || (XU - X - B"
    " - (\"mod\":\".*foo\"/\"4\"))",[]}]}.
+
+%% You might want to exclude certains functions or modules from your
+%% rebar3 xref analysis.
+%% You can do so with the following option, that takes as list items
+%% one or more of a combination of:
+%% * module(),
+%% * {module(), function()},
+%% * {module(), function(), arity()}
+{xref_ignores, []}.
+
+%% == alias ==
+
+%% When you want a certain combination of operations to be done
+%% as if you were using a rebar3 command. In the example below:
+%% > rebar3 check
+%%   (equivalent to rebar3 do xref, dialyzer)
+%% or
+%% > rebar3 test
+%%   (equivalent to rebar3 do eunit, ct --suite=rebar_alias_SUITE, cover)
+
+{alias, [{check, [xref, dialyzer]},
+         {test, [eunit, {ct, "--suite=rebar_alias_SUITE"}, cover]}]}.

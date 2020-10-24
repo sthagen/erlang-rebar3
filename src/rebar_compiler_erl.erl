@@ -48,8 +48,8 @@ needed_files(Graph, FoundFiles, _, AppInfo) ->
     EbinDir = rebar_app_info:ebin_dir(AppInfo),
     RebarOpts = rebar_app_info:opts(AppInfo),
     ErlOpts = rebar_opts:erl_opts(RebarOpts),
-    ?DEBUG("erlopts ~p", [ErlOpts]),
-    ?DEBUG("files to compile ~p", [FoundFiles]),
+    ?DEBUG("compile options: {erl_opts, ~p}.", [ErlOpts]),
+    ?DEBUG("files to analyze ~p", [FoundFiles]),
 
     %% Make sure that the ebin dir is on the path
     ok = rebar_file_utils:ensure_dir(EbinDir),
@@ -100,6 +100,7 @@ dependencies(Source, SourceDir, Dirs) ->
     end.
 
 dependencies(Source, _SourceDir, Dirs, DepOpts) ->
+    rebar_compiler_epp:ensure_started(),
     OptPTrans = proplists:get_value(parse_transforms, DepOpts, []),
     try rebar_compiler_epp:deps(Source, DepOpts) of
         #{include := AbsIncls,
@@ -109,10 +110,10 @@ dependencies(Source, _SourceDir, Dirs, DepOpts) ->
           behaviour := Behaviours} ->
             %% TODO: check for core transforms?
             {_MissIncl, _MissInclLib} =/= {[],[]} andalso
-            ?DEBUG("Missing: ~p", [{_MissIncl, _MissInclLib}]),
-            expand_file_names([module_to_erl(Mod) || Mod <- OptPTrans ++ PTrans], Dirs) ++
-            expand_file_names([module_to_erl(Mod) || Mod <- Behaviours], Dirs) ++
-            AbsIncls
+            ?DIAGNOSTIC("Missing: ~p", [{_MissIncl, _MissInclLib}]),
+            lists:filtermap(
+                fun (Mod) -> rebar_compiler_epp:resolve_source(Mod, Dirs) end,
+                OptPTrans ++ PTrans ++ Behaviours) ++ AbsIncls
     catch
         error:{badmatch, {error, Reason}} ->
             case file:format_error(Reason) of
@@ -141,6 +142,7 @@ compile(Source, [{_, OutDir}], Config, ErlOpts) ->
     end.
 
 compile_and_track(Source, [{Ext, OutDir}], Config, ErlOpts) ->
+    rebar_compiler_epp:flush(),
     BuildOpts = [{outdir, OutDir} | ErlOpts],
     Target = target_base(OutDir, Source) ++ Ext,
     AllOpts = case erlang:function_exported(compile, env_compiler_options, 0) of
@@ -402,7 +404,7 @@ expand_file_names(Files, Dirs) ->
                       Res = rebar_utils:find_files_in_dirs(Dirs, [$^, Incl, $$], true),
                       case Res of
                           [] ->
-                              ?DEBUG("FILE ~p NOT FOUND", [Incl]),
+                              ?DIAGNOSTIC("FILE ~p NOT FOUND", [Incl]),
                               [];
                           _ ->
                               Res

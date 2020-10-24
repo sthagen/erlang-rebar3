@@ -74,11 +74,11 @@ do(State, Tests) ->
                     %% Run ct provider post hooks for all project apps and top level project hooks
                     rebar_hooks:run_project_and_app_hooks(Cwd, post, ?PROVIDER, Providers, State),
                     rebar_paths:set_paths([plugins, deps], State),
-                    symlink_to_last_ct_logs(State),
+                    symlink_to_last_ct_logs(State, T),
                     {ok, State};
                 Error ->
                     rebar_paths:set_paths([plugins, deps], State),
-                    symlink_to_last_ct_logs(State),
+                    symlink_to_last_ct_logs(State, T),
                     Error
             end;
         Error ->
@@ -90,7 +90,7 @@ run_tests(State, Opts) ->
     T = translate_paths(State, Opts),
     Opts1 = setup_logdir(State, T),
     Opts2 = turn_off_auto_compile(Opts1),
-    ?DEBUG("ct_opts ~p", [Opts2]),
+    ?DEBUG("Running tests with {ct_opts, ~p}.", [Opts2]),
     {RawOpts, _} = rebar_state:command_parsed_args(State),
     Result = case proplists:get_value(verbose, RawOpts, false) of
         true  -> run_test_verbose(Opts2);
@@ -120,11 +120,14 @@ format_error({error_reading_testspec, Reason}) ->
 %% Internal functions
 %% ===================================================================
 
-%% @doc Tries to make the symlink `_build/<profile>/logs/last` to the `ct_run` directory
+%% @doc Tries to make the symlink `_build/<profile>/logs/last' to the `ct_run' directory
 %% of the last common test run.
--spec symlink_to_last_ct_logs(rebar_state:t()) -> ok.
-symlink_to_last_ct_logs(State) ->
-    LogDir = filename:join([rebar_dir:base_dir(State), "logs"]),
+-spec symlink_to_last_ct_logs(rebar_state:t(), list()) -> ok.
+symlink_to_last_ct_logs(State, Opts) ->
+    LogDir = case proplists:get_value(logdir, Opts) of
+        undefined -> filename:join([rebar_dir:base_dir(State), "logs"]);
+        Dir -> Dir
+    end,
     {ok, Filenames} = file:list_dir(LogDir),
     CtRunDirs = lists:filter(fun(S) -> re:run(S, "ct_run", [unicode]) /= nomatch end, Filenames),
     case CtRunDirs of
@@ -142,7 +145,7 @@ symlink_to_last_ct_logs(State) ->
                     %% and make a new updated one
                     rebar_file_utils:rm_rf(Target),
                     rebar_file_utils:symlink_or_copy(Existing, Target);
-                Reason -> ?DEBUG("Warning, couldn't make a symlink to ~ts, reason: ~p.", [Target, Reason])
+                Reason -> ?DIAGNOSTIC("Warning, couldn't make a symlink to ~ts, reason: ~p.", [Target, Reason])
             end
     end.
 
@@ -232,7 +235,7 @@ cfgopts(State) ->
 
 ensure_opts([], Acc) -> lists:reverse(Acc);
 ensure_opts([{cover, _}|Rest], Acc) ->
-    ?WARN("Cover specs not supported. See http://www.rebar3.org/docs/running-tests#common-test", []),
+    ?WARN("Cover specs not supported. See https://www.rebar3.org/docs/testing/ct/", []),
     ensure_opts(Rest, Acc);
 ensure_opts([{auto_compile, _}|Rest], Acc) ->
     ?WARN("Auto compile not supported", []),
@@ -386,6 +389,7 @@ compile(State, {ok, _} = Tests) ->
 compile(_State, Error) -> Error.
 
 do_compile(State) ->
+    ?DEBUG("Re-compiling the project under the test profile with CT options injected...", []),
     {ok, S} = rebar_prv_compile:do(State),
     ok = maybe_cover_compile(S),
     {ok, S}.
@@ -686,12 +690,41 @@ translate(State, [], Path) ->
         {error, badparent} -> Path
     end.
 
+-spec handle_keep_logs(file:filename(), pos_integer()) -> ok.
+handle_keep_logs(LogDir, N) ->
+    case file:list_dir(LogDir) of
+        {ok, Filenames} ->
+            Dirs = lists:filter(fun(File) ->
+                        filelib:is_dir(filename:join([LogDir, File]))
+                    end, Filenames) -- ["last"], %% we ignore the symlink as we later handle it
+            case Dirs of
+                %% first time running the tests, there are no logs to delete
+                [] -> ok;
+                %% during the next run we would crash because of keep_logs
+                _ when length(Dirs) >= N ->
+                    SortedDirs = lists:reverse(lists:sort(Dirs)),
+                    %% sort the log dirs and keep the N - 1 newest
+                    {_Keep, Discard} = lists:split(N - 1, SortedDirs),
+                    ?DEBUG("Removing the following directories because keep_logs is in ct_opts: ~p", [Discard]),
+                    [rebar_file_utils:rm_rf(filename:join([LogDir, Dir])) || Dir <- Discard],
+                    ok;
+                %% we still dont have enough log run directories as to crash
+                _ -> ok
+            end;
+        _ -> ok
+    end.
+
 setup_logdir(State, Opts) ->
     Logdir = case proplists:get_value(logdir, Opts) of
         undefined -> filename:join([rebar_dir:base_dir(State), "logs"]);
         Dir       -> Dir
     end,
     filelib:ensure_dir(filename:join([Logdir, "dummy.beam"])),
+    case proplists:get_value(keep_logs, Opts) of
+        all -> ok;
+        undefined -> ok;
+        N -> handle_keep_logs(Logdir, N)
+    end,
     [{logdir, Logdir}|lists:keydelete(logdir, 1, Opts)].
 
 turn_off_auto_compile(Opts) ->

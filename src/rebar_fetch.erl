@@ -39,10 +39,13 @@ download_source(AppInfo, State)  ->
         {error, Reason} ->
             throw(?PRV_ERROR(Reason))
     catch
+        %% if already a PRV_ERROR format just re-raise it
+        ?WITH_STACKTRACE(error, {error, {Module, Reason}}, S)
+            erlang:raise(error, {error, {Module, Reason}}, S);
         throw:{no_resource, Type, Location} ->
             throw(?PRV_ERROR({no_resource, Location, Type}));
         ?WITH_STACKTRACE(C,T,S)
-            ?DEBUG("rebar_fetch exception ~p ~p ~p", [C, T, S]),
+            ?DIAGNOSTIC("rebar_fetch exception ~p ~p ~p", [C, T, S]),
             throw(?PRV_ERROR({fetch_fail, rebar_app_info:source(AppInfo)}))
     end.
 
@@ -56,7 +59,7 @@ download_source_(AppInfo, State) ->
             code:del_path(filename:absname(filename:join(AppDir1, "ebin"))),
             FetchDir = rebar_app_info:fetch_dir(AppInfo),
             ok = rebar_file_utils:rm_rf(filename:absname(FetchDir)),
-            ?DEBUG("Moving checkout ~p to ~p", [TmpDir, filename:absname(FetchDir)]),
+            ?DIAGNOSTIC("Moving checkout ~p to ~p", [TmpDir, filename:absname(FetchDir)]),
             rebar_file_utils:mv(TmpDir, filename:absname(FetchDir));
         Error ->
             Error
