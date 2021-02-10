@@ -210,15 +210,16 @@ store_etag_in_cache(Path, ETag) ->
       UpdateETag :: boolean(),
       Res :: ok | {unexpected_hash, integer(), integer()} | {fetch_fail, binary(), binary()}
            | {bad_registry_checksum, integer(), integer()} | {error, _}.
-cached_download(TmpDir, CachePath, Pkg={pkg, Name, Vsn, _OldHash, _Hash, RepoConfig}, State, ETag,
+cached_download(TmpDir, CachePath, Pkg={pkg, Name, Vsn, _OldHash, _Hash, RepoConfig}, _State, ETag,
                 ETagPath, UpdateETag) ->
-    CDN = maybe_default_cdn(State),
-    case request(RepoConfig#{repo_url => CDN}, Name, Vsn, ETag) of
+    ?DEBUG("Making request to get package ~ts from repo ~ts",
+           [Name, rebar_hex_repos:format_repo(RepoConfig)]),
+    case request(RepoConfig, Name, Vsn, ETag) of
         {ok, cached} ->
             ?DEBUG("Version cached at ~ts is up to date, reusing it", [CachePath]),
             serve_from_cache(TmpDir, CachePath, Pkg);
         {ok, Body, NewETag} ->
-            ?DEBUG("Downloaded package from repo ~ts, caching at ~ts", [CDN, CachePath]),
+            ?DEBUG("Downloaded package ~ts, caching at ~ts", [Name, CachePath]),
             maybe_store_etag_in_cache(UpdateETag, ETagPath, NewETag),
             serve_from_download(TmpDir, CachePath, Pkg, Body);
         error when ETag =/= <<>> ->
@@ -228,10 +229,6 @@ cached_download(TmpDir, CachePath, Pkg={pkg, Name, Vsn, _OldHash, _Hash, RepoCon
         error ->
             {fetch_fail, Name, Vsn}
     end.
-
-maybe_default_cdn(State) ->
-    CDN = rebar_state:get(State, rebar_packages_cdn, ?DEFAULT_CDN),
-    rebar_utils:to_binary(CDN).
 
 -spec serve_from_cache(TmpDir, CachePath, Pkg) -> Res when
       TmpDir :: file:name(),
@@ -283,7 +280,7 @@ maybe_old_registry_checksum(Hash) -> list_to_integer(binary_to_list(Hash), 16).
       Binary :: binary(),
       Res :: ok | {error,_}.
 serve_from_download(TmpDir, CachePath, Package, Binary) ->
-    ?DEBUG("Writing ~p to cache at ~ts", [Package, CachePath]),
+    ?DEBUG("Writing ~p to cache at ~ts", [catch anon(Package), CachePath]),
     file:write_file(CachePath, Binary),
     serve_from_memory(TmpDir, Binary, Package).
 
@@ -296,3 +293,7 @@ maybe_store_etag_in_cache(false = _UpdateETag, _Path, _ETag) ->
     ok;
 maybe_store_etag_in_cache(true = _UpdateETag, Path, ETag) ->
     store_etag_in_cache(Path, ETag).
+
+anon({pkg, PkgName, PkgVsn, OldHash, Hash, RepoConfig}) ->
+    {pkg, PkgName, PkgVsn, OldHash, Hash,
+     rebar_hex_repos:anon_repo_config(RepoConfig)}.

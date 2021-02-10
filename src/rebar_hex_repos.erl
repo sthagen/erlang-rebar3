@@ -5,7 +5,10 @@
          auth_config/1,
          remove_from_auth_config/2,
          update_auth_config/2,
-         format_error/1]).
+         format_error/1,
+         anon_repo_config/1,
+         format_repo/1
+        ]).
 
 -ifdef(TEST).
 %% exported for test purposes
@@ -24,7 +27,9 @@
                   repo_key => binary(),
                   repo_public_key => binary(),
                   repo_verify => binary(),
-                  repo_verify_origin => binary()}.
+                  repo_verify_origin => binary(),
+                  mirror_of => _ % legacy field getting stripped
+                 }.
 
 from_state(BaseConfig, State) ->
     HexConfig = rebar_state:get(State, hex, []),
@@ -34,7 +39,7 @@ from_state(BaseConfig, State) ->
     %% add base config entries that are specific to use by rebar3 and not overridable
     Repos1 = merge_with_base_and_auth(Repos, BaseConfig, Auth),
     %% merge organizations parent repo options into each oraganization repo
-    update_organizations(Repos1).
+    update_organizations(maybe_override_default_repo_url(Repos1, State)).
 
 -spec get_repo_config(unicode:unicode_binary(), rebar_state:t() | [repo()])
                      -> {ok, repo()} | error.
@@ -49,6 +54,26 @@ get_repo_config(RepoName, State) ->
     Resources = rebar_state:resources(State),
     #{repos := Repos} = rebar_resource_v2:find_resource_state(pkg, Resources),
     get_repo_config(RepoName, Repos).
+
+-spec anon_repo_config(repo()) ->
+    #{api_url := _, name := _, repo_name => _, repo_organization => _,
+      repo_url := _, repo_verify => _, repo_verify_origin => _,
+      mirror_of => _}.
+anon_repo_config(Map) ->
+    maps:with([name, repo_name, api_url, repo_url, repo_organization,
+               mirror_of, repo_verify, repo_verify_origin], Map).
+
+-spec format_repo(repo()) -> unicode:chardata().
+format_repo(RepoConfig) ->
+    Name = maps:get(name, RepoConfig, undefined),
+    case get({?MODULE, format_repo, Name}) of
+        undefined ->
+            put({?MODULE, format_repo, Name}, true),
+            Anon = anon_repo_config(RepoConfig),
+            io_lib:format("~ts (~p)", [Name, Anon]);
+        true ->
+            io_lib:format("~ts", [Name])
+    end.
 
 merge_with_base_and_auth(Repos, BaseConfig, Auth) ->
     [maps:merge(maps:merge(Repo, BaseConfig),
@@ -101,6 +126,15 @@ update_organizations(Repos) ->
                                                 filename:join("repos", rebar_utils:to_list(RepoName))),
                       %% still let the organization config override this constructed repo url
                       maps:merge(Parent#{repo_url => rebar_utils:to_binary(ParentRepoUrl)}, Repo);
+                 (Repo) ->
+                      Repo
+              end, Repos).
+
+maybe_override_default_repo_url(Repos, State) ->
+    lists:map(fun(Repo=#{repo_name := ?PUBLIC_HEX_REPO}) ->
+                      Repo#{repo_url => rebar_state:default_hex_repo_url_override(State)};
+                 (Repo=#{name := ?PUBLIC_HEX_REPO}) ->
+                      Repo#{repo_url => rebar_state:default_hex_repo_url_override(State)};
                  (Repo) ->
                       Repo
               end, Repos).
