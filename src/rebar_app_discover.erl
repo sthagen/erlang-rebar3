@@ -256,7 +256,7 @@ app_dirs(LibDir, SrcDirs, State) ->
     ]),
 
     EbinPath = filename:join([LibDir, "ebin", "*.app"]),
-    MixExsPath = filename:join([LibDir, "src", "mix.exs"]),
+    MixExsPath = filename:join([LibDir, "mix.exs"]),
 
     lists:usort(lists:foldl(fun(Path, Acc) ->
                                 Files = filelib:wildcard(rebar_utils:to_list(Path)),
@@ -344,14 +344,18 @@ find_app(AppInfo, AppDir, SrcDirs, Validate, State) ->
     {true, rebar_app_info:t()} | false.
 find_app_(AppInfo, AppDir, SrcDirs, Validate, State) ->
     Extensions = rebar_state:get(State, application_resource_extensions, ?DEFAULT_APP_RESOURCE_EXT),
+    NormSrcDirs = [case SrcDir of
+                       {ActualSrcDir, _Opts} -> ActualSrcDir;
+                       _ -> SrcDir
+                   end || SrcDir <- SrcDirs],
     ResourceFiles = [
         {app, filelib:wildcard(filename:join([AppDir, "ebin", "*.app"]))},
-        {mix_exs, filelib:wildcard(filename:join([AppDir, "src", "mix.exs"]))} |
-        [
-        {extension_type(Ext), lists:append([ filelib:wildcard(filename:join([AppDir, SrcDir, "*" ++ Ext]))
-        || SrcDir <- SrcDirs])}
-        || Ext <- Extensions
-    ]],
+        {mix_exs, filelib:wildcard(filename:join([AppDir, "mix.exs"]))}
+        | [{extension_type(Ext),
+            lists:append([filelib:wildcard(filename:join([AppDir, SrcDir, "*" ++ Ext]))
+                          || SrcDir <- NormSrcDirs])}
+           || Ext <- Extensions]
+    ],
     FlattenedResourceFiles = flatten_resource_files(ResourceFiles),
     try_handle_resource_files(AppInfo, AppDir, FlattenedResourceFiles, Validate).
 
@@ -447,8 +451,14 @@ try_handle_resource_files(AppInfo, AppDir, [{app, AppFile} | Rest], Validate) ->
 try_handle_resource_files(AppInfo, AppDir, [{Type, AppSrcFile} | _Rest], Validate)
     when Type =:= app_src orelse Type =:= script ->
     try_handle_app_src_file(AppInfo, AppDir, AppSrcFile, Validate);
-try_handle_resource_files(AppInfo, _AppDir, [{mix_exs, _AppSrcFile} | _Rest], _Validate) ->
-    {true, rebar_app_info:project_type(AppInfo, mix)};
+try_handle_resource_files(AppInfo, AppDir, [{mix_exs, _MixExs} | Rest], Validate) ->
+    %% prefer a rebar3 buildable app if both are found
+    case try_handle_resource_files(AppInfo, AppDir, Rest, Validate) of
+        false ->
+            {true, rebar_app_info:project_type(AppInfo, mix)};
+        {true, _}=Result ->
+            Result
+    end;
 try_handle_resource_files(_AppInfo, _AppDir, [], _Validate) ->
     false.
 
