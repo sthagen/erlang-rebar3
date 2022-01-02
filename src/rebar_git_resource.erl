@@ -17,7 +17,7 @@
          make_vsn_/1,
          git_vsn/0]).
 
-%% For backward compatibilty
+%% For backward compatibility
 -export ([download/3]).
 
 -include("rebar.hrl").
@@ -141,7 +141,7 @@ download(TmpDir, AppInfo, State, _) ->
             {error, Error}
     end.
 
-%% For backward compatibilty
+%% For backward compatibility
 download(Dir, AppInfo, State) ->
     download_(Dir, AppInfo, State).
 
@@ -180,7 +180,16 @@ maybe_warn_local_url(Url) ->
     end.
 
 %% Use different git clone commands depending on git --version
-git_clone(branch, GitVsn, Url, Dir, Branch) when GitVsn >= {1,7,10}; GitVsn =:= undefined ->
+git_clone(branch, GitVsn, Url, Dir, Branch) when GitVsn >= {2,3,0}; GitVsn =:= undefined ->
+    rebar_utils:sh(?FMT("git clone ~ts ~ts ~ts -b ~ts --single-branch",
+                        [git_clone_options(),
+                         rebar_utils:escape_chars(Url),
+                         rebar_utils:escape_chars(filename:basename(Dir)),
+                         rebar_utils:escape_chars(Branch)]),
+                   [{cd, filename:dirname(Dir)},
+                    {env, [{"GIT_TERMINAL_PROMPT", "0"}]}]),
+    ok;
+git_clone(branch, GitVsn, Url, Dir, Branch) when GitVsn >= {1,7,10} ->
     rebar_utils:sh(?FMT("git clone ~ts ~ts ~ts -b ~ts --single-branch",
                         [git_clone_options(),
                          rebar_utils:escape_chars(Url),
@@ -196,7 +205,16 @@ git_clone(branch, _GitVsn, Url, Dir, Branch) ->
                          rebar_utils:escape_chars(Branch)]),
                    [{cd, filename:dirname(Dir)}]),
     ok;
-git_clone(tag, GitVsn, Url, Dir, Tag) when GitVsn >= {1,7,10}; GitVsn =:= undefined ->
+git_clone(tag, GitVsn, Url, Dir, Tag) when GitVsn >= {2,3,0}; GitVsn =:= undefined ->
+    rebar_utils:sh(?FMT("git clone ~ts ~ts ~ts -b ~ts --single-branch",
+                        [git_clone_options(),
+                         rebar_utils:escape_chars(Url),
+                         rebar_utils:escape_chars(filename:basename(Dir)),
+                         rebar_utils:escape_chars(Tag)]),
+                   [{cd, filename:dirname(Dir)},
+                    {env, [{"GIT_TERMINAL_PROMPT", "0"}]}]),
+    ok;
+git_clone(tag, GitVsn, Url, Dir, Tag) when GitVsn >= {1,7,10} ->
     rebar_utils:sh(?FMT("git clone ~ts ~ts ~ts -b ~ts --single-branch",
                         [git_clone_options(),
                          rebar_utils:escape_chars(Url),
@@ -335,11 +353,17 @@ get_patch_count(Dir, RawRef) ->
     Ref = re:replace(RawRef, "\\s", "", [global, unicode]),
     Cmd = io_lib:format("git rev-list --count ~ts..HEAD",
                         [rebar_utils:escape_chars(Ref)]),
-    {ok, PatchLines} = rebar_utils:sh(Cmd,
-                                        [{use_stdout, false},
-                                         {cd, Dir},
-                                         {debug_abort_on_error, AbortMsg}]),
-    {ok, list_to_integer(rebar_string:trim(PatchLines))}.
+    {ok, Output} = rebar_utils:sh(Cmd,
+                                  [{use_stdout, false},
+                                   {cd, Dir},
+                                   {debug_abort_on_error, AbortMsg}]),
+    case rebar_string:split(Output, "\n") of
+        [PatchLines, []] ->
+            {ok, list_to_integer(PatchLines)};
+        [Warning, PatchLines] ->
+            ?WARN("Extra message from git rev-list: ~ts", [Warning]),
+            {ok, list_to_integer(rebar_string:trim(PatchLines))}
+    end.
 
 
 parse_tags(Dir) ->
@@ -390,4 +414,3 @@ check_type_support() ->
                     ok
             end
     end.
-

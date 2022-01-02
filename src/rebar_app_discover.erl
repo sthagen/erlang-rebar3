@@ -54,7 +54,7 @@ do(State, LibDirs) ->
                          end, State, lists:reverse(CurrentProfiles)),
 
     %% Handle sub project apps deps
-    %% Sort apps so we get the same merged deps config everytime
+    %% Sort apps so we get the same merged deps config every time
     SortedApps = rebar_utils:sort_deps(Apps),
     lists:foldl(fun(AppInfo, StateAcc) ->
                         Name = rebar_app_info:name(AppInfo),
@@ -415,6 +415,7 @@ create_app_info(AppInfo, AppDir, AppFile) ->
             AppVsn = proplists:get_value(vsn, AppDetails),
             Applications = proplists:get_value(applications, AppDetails, []),
             IncludedApplications = proplists:get_value(included_applications, AppDetails, []),
+            OptionalApplications = proplists:get_value(optional_applications, AppDetails, []),
             AppInfo1 = rebar_app_info:name(
                          rebar_app_info:vsn(
                            rebar_app_info:original_vsn(
@@ -422,14 +423,15 @@ create_app_info(AppInfo, AppDir, AppFile) ->
             AppInfo2 = rebar_app_info:applications(
                          rebar_app_info:app_details(AppInfo1, AppDetails), Applications),
             AppInfo3 = rebar_app_info:included_applications(AppInfo2, IncludedApplications),
-            Valid = case rebar_app_utils:validate_application_info(AppInfo3) =:= true
-                        andalso rebar_app_info:has_all_artifacts(AppInfo3) =:= true of
+            AppInfo4 = rebar_app_info:optional_applications(AppInfo3, OptionalApplications),
+            Valid = case rebar_app_utils:validate_application_info(AppInfo4) =:= true
+                        andalso rebar_app_info:has_all_artifacts(AppInfo4) =:= true of
                         true ->
                             true;
                         _ ->
                             false
                     end,
-            rebar_app_info:dir(rebar_app_info:valid(AppInfo3, Valid), AppDir);
+            rebar_app_info:dir(rebar_app_info:valid(AppInfo4, Valid), AppDir);
         _Invalid ->
             throw({error, {?MODULE, {cannot_read_app_file, AppFile}}})
     catch
@@ -438,7 +440,7 @@ create_app_info(AppInfo, AppDir, AppFile) ->
     end.
 
 
-%% @doc Read in and parse the .app file if it is availabe. Do the same for
+%% @doc Read in and parse the .app file if it is available. Do the same for
 %% the .app.src file if it exists.
 -spec try_handle_resource_files(AppInfo, AppDir, ResourceFiles, valid | invalid | all) ->
     {true, AppInfo} | false when
@@ -463,7 +465,7 @@ try_handle_resource_files(_AppInfo, _AppDir, [], _Validate) ->
     false.
 
 
-%% @doc Read in and parse the .app file if it is availabe. Do the same for
+%% @doc Read in and parse the .app file if it is available. Do the same for
 %% the .app.src file if it exists.
 -spec try_handle_app_file(AppInfo, AppDir, File, AppSrcFile, valid | invalid | all) ->
     {true, AppInfo} | false when
