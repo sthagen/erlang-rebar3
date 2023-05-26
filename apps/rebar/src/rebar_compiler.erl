@@ -8,7 +8,9 @@
 
          needs_compile/3,
          ok_tuple/2,
+         ok_tuple/4,
          error_tuple/4,
+         error_tuple/5,
          maybe_report/1,
          format_error_source/2,
          report/1]).
@@ -127,8 +129,14 @@ needs_compile(Source, OutExt, Mappings) ->
 ok_tuple(Source, Ws) ->
     rebar_base_compiler:ok_tuple(Source, Ws).
 
+ok_tuple(Source, Ws, Config, Opts) ->
+    rebar_base_compiler:ok_tuple(Source, Ws, Config, Opts).
+
 error_tuple(Source, Es, Ws, Opts) ->
     rebar_base_compiler:error_tuple(Source, Es, Ws, Opts).
+
+error_tuple(Source, Es, Ws, Config, Opts) ->
+    rebar_base_compiler:error_tuple(Source, Es, Ws, Config, Opts).
 
 maybe_report(Reportable) ->
     rebar_base_compiler:maybe_report(Reportable).

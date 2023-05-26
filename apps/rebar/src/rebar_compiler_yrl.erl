@@ -32,7 +32,7 @@ needed_files(_, FoundFiles, Mappings, AppInfo) ->
 dependencies(_, _, _) ->
     [].
 
-compile(Source, [{_, OutDir}], _, Opts0) ->
+compile(Source, [{_, OutDir}], Config, Opts0) ->
     Opts = case proplists:get_value(parserfile, Opts0) of
         undefined ->
             BaseName = filename:basename(Source, ".yrl"),
@@ -46,9 +46,9 @@ compile(Source, [{_, OutDir}], _, Opts0) ->
         {ok, _} ->
             ok;
         {ok, _Mod, Ws} ->
-            rebar_compiler:ok_tuple(Source, Ws);
+            rebar_compiler:ok_tuple(Source, Ws, Config, AllOpts);
         {error, Es, Ws} ->
-            rebar_compiler:error_tuple(Source, Es, Ws, AllOpts)
+            rebar_compiler:error_tuple(Source, Es, Ws, Config, AllOpts)
     end.
 
 clean(YrlFiles, _AppInfo) ->
