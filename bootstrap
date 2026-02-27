@@ -53,7 +53,7 @@ main(Args) ->
     bootstrap_rebar3(),
 
     %% Build rebar.app from rebar.app.src.script
-    {ok, App} = rebar_app_info:new(rebar, "3.26.0", filename:absname("_build/default/lib/rebar/")),
+    {ok, App} = rebar_app_info:new(rebar, "3.27.0", filename:absname("_build/default/lib/rebar/")),
     rebar_otp_app:compile(rebar_state:new(), App),
 
     %% Because we are compiling files that are loaded already we want to silence
@@ -177,7 +177,7 @@ compile_yrl_file(File) ->
     {ok, _} = yecc:file(File).
 
 compile_erl_file(File, Opts) ->
-    case compile:file(File, Opts) of
+    case compile:file(File, [nowarn_deprecated_catch | Opts]) of
         {ok, _Mod} ->
             ok;
         {ok, _Mod, []} ->
